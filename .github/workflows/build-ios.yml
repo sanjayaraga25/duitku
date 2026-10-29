@@ -1,0 +1,80 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Select latest available Xcode
+        run: |
+          ls /Applications | grep -i Xcode
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Prebuild native iOS project
+        run: npx expo prebuild --platform ios --non-interactive
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: pod install
+
+      - name: Find workspace and scheme
+        id: target_scheme
+        run: |
+          WORKSPACE=$(ls -d ios/*.xcworkspace | head -n1)
+          PROJECT=$(ls -d ios/*.xcodeproj | head -n1)
+          SCHEME=$(basename "$PROJECT" .xcodeproj)
+          echo "workspace=$WORKSPACE" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "Workspace: $WORKSPACE / Scheme: $SCHEME"
+          xcodebuild -list -workspace "$WORKSPACE"
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -workspace "${{ steps.target_scheme.outputs.workspace }}" \
+            -scheme "${{ steps.target_scheme.outputs.scheme }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH=$(find build/DerivedData/Build/Products -maxdepth 2 -name "*.app" -type d | head -n1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app bundle found in build products"
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+          mkdir -p build/Payload
+          cp -r "$APP_PATH" build/Payload/
+          cd build
+          zip -r duitku-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: duitku-unsigned
+          path: build/duitku-unsigned.ipa
+          retention-days: 14

@@ -31,7 +31,18 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
+
+# build outputs & signing artifacts
+build/
+*.ipa
+*.cer
+*.mobileprovision
+*.p12
+*.p8
+*.key
 
 # typescript
 *.tsbuildinfo
